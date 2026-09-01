@@ -1,0 +1,804 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local TextService = game:GetService("TextService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Clean up existing instances
+if CoreGui:FindFirstChild("AUTOBUILD_TAG_UI") then
+	CoreGui.AUTOBUILD_TAG_UI:Destroy()
+end
+
+-- Persistence Setup
+local SAVE_FILE = "AutobuildData.json"
+local tabsData = {{name = "Build 1", content = ""}}
+local activeTabIndex = 1
+
+if isfile and isfile(SAVE_FILE) then
+	local success, decoded = pcall(function() return HttpService:JSONDecode(readfile(SAVE_FILE)) end)
+	if success and type(decoded) == "table" and #decoded > 0 then
+		tabsData = decoded
+	end
+end
+
+local function saveData()
+	if writefile then
+		pcall(function() writefile(SAVE_FILE, HttpService:JSONEncode(tabsData)) end)
+	end
+end
+
+-- Styling & Palette
+local C_BLACK = Color3.fromRGB(10, 10, 14)
+local C_GRAY = Color3.fromRGB(22, 24, 30)
+local C_LIGHT_GRAY = Color3.fromRGB(36, 39, 48)
+local C_GREEN = Color3.fromRGB(0, 255, 110)
+local C_DARK_GREEN = Color3.fromRGB(0, 80, 35)
+local C_RED = Color3.fromRGB(255, 60, 70)
+local C_DARK_RED = Color3.fromRGB(110, 25, 30)
+local C_WHITE = Color3.fromRGB(245, 245, 245)
+local FONT_BOLD = Font.new([[rbxasset://fonts/families/Inconsolata.json]], Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+
+-- UI Construction Helpers
+local function create(className, properties)
+	local instance = Instance.new(className)
+	for k, v in pairs(properties) do
+		instance[k] = v
+	end
+	return instance
+end
+
+local function addCorner(parent, radius)
+	return create("UICorner", {Parent = parent, CornerRadius = UDim.new(0, radius)})
+end
+
+local function addStroke(parent, thickness, color)
+	return create("UIStroke", {
+		Parent = parent,
+		Thickness = thickness,
+		Color = color,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	})
+end
+
+-- Master ScreenGui
+local gui = create("ScreenGui", {
+	Name = "AUTOBUILD_TAG_UI",
+	ResetOnSpawn = false,
+	DisplayOrder = 999
+})
+local parentSuccess = pcall(function() gui.Parent = CoreGui end)
+if not parentSuccess then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+-- Main Window (Squircle)
+local normalSize = UDim2.new(0, 450, 0, 370)
+local fullSize = UDim2.new(0, 680, 0, 480)
+local minimizedSize = UDim2.new(0, 450, 0, 36)
+local isMinimized = false
+local isMaximized = false
+
+local mainFrame = create("Frame", {
+	Parent = gui,
+	Size = UDim2.new(0, 0, 0, 0),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	BackgroundColor3 = C_BLACK,
+	Active = true,
+	ClipsDescendants = true
+})
+addCorner(mainFrame, 14)
+
+-- Animated Chaser Outline
+local mainStroke = addStroke(mainFrame, 2.5, C_GREEN)
+local borderGradient = create("UIGradient", {
+	Parent = mainStroke,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, C_GREEN),
+		ColorSequenceKeypoint.new(0.3, C_DARK_GREEN),
+		ColorSequenceKeypoint.new(0.5, C_GREEN),
+		ColorSequenceKeypoint.new(0.8, C_DARK_GREEN),
+		ColorSequenceKeypoint.new(1, C_GREEN)
+	})
+})
+
+RunService.RenderStepped:Connect(function(dt)
+	borderGradient.Rotation = (borderGradient.Rotation + 140 * dt) % 360
+end)
+
+-- Dragging Mechanics
+local dragging, dragStart, startPos
+mainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+	end
+end)
+mainFrame.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+-- Header Bar
+local header = create("Frame", {
+	Parent = mainFrame,
+	Size = UDim2.new(1, 0, 0, 36),
+	BackgroundTransparency = 1
+})
+
+local title = create("TextLabel", {
+	Parent = header,
+	Size = UDim2.new(1, -110, 1, 0),
+	Position = UDim2.new(0, 12, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "AUTO BUILD BY TAG",
+	TextColor3 = C_GREEN,
+	FontFace = FONT_BOLD,
+	TextSize = 15,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+-- Header Controls
+local controlContainer = create("Frame", {
+	Parent = header,
+	Size = UDim2.new(0, 95, 1, 0),
+	Position = UDim2.new(1, -98, 0, 0),
+	BackgroundTransparency = 1
+})
+create("UIListLayout", {
+	Parent = controlContainer,
+	FillDirection = Enum.FillDirection.Horizontal,
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Padding = UDim.new(0, 6)
+})
+
+local function createHeaderBtn(symbol, defaultColor, strokeColor, hoverBg)
+	local btn = create("TextButton", {
+		Parent = controlContainer,
+		Size = UDim2.new(0, 24, 0, 24),
+		BackgroundColor3 = C_GRAY,
+		Text = symbol,
+		TextColor3 = defaultColor or C_GREEN,
+		FontFace = FONT_BOLD,
+		TextSize = 13,
+		AutoButtonColor = false
+	})
+	addCorner(btn, 6)
+	local stroke = addStroke(btn, 1, strokeColor or C_DARK_GREEN)
+	
+	btn.MouseEnter:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = hoverBg or C_LIGHT_GRAY, TextColor3 = C_WHITE}):Play()
+		TweenService:Create(stroke, TweenInfo.new(0.2), {Color = defaultColor or C_GREEN}):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = C_GRAY, TextColor3 = defaultColor or C_GREEN}):Play()
+		TweenService:Create(stroke, TweenInfo.new(0.2), {Color = strokeColor or C_DARK_GREEN}):Play()
+	end)
+	return btn
+end
+
+local btnMin = createHeaderBtn("-", C_GREEN, C_DARK_GREEN)
+local btnMax = createHeaderBtn("□", C_GREEN, C_DARK_GREEN)
+local btnClose = createHeaderBtn("✕", C_RED, C_DARK_RED, Color3.fromRGB(150, 30, 40))
+
+-- Main Body Layout
+local bodyFrame = create("Frame", {
+	Parent = mainFrame,
+	Size = UDim2.new(1, 0, 1, -36),
+	Position = UDim2.new(0, 0, 0, 36),
+	BackgroundTransparency = 1,
+	ClipsDescendants = true,
+	Visible = false
+})
+
+-- Smooth Window Opening Animation
+local openTween = TweenService:Create(mainFrame, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = normalSize})
+openTween:Play()
+openTween.Completed:Connect(function()
+	if not isMinimized then
+		bodyFrame.Visible = true
+	end
+end)
+
+btnMin.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	btnMax.Visible = not isMinimized
+	
+	bodyFrame.Visible = false
+	local targetSize = isMinimized and minimizedSize or (isMaximized and fullSize or normalSize)
+	local tween = TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = targetSize})
+	tween:Play()
+	tween.Completed:Connect(function()
+		if not isMinimized then
+			bodyFrame.Visible = true
+		end
+	end)
+end)
+
+btnMax.MouseButton1Click:Connect(function()
+	if isMinimized then return end
+	isMaximized = not isMaximized
+	local targetSize = isMaximized and fullSize or normalSize
+	TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = targetSize}):Play()
+end)
+
+btnClose.MouseButton1Click:Connect(function()
+	bodyFrame.Visible = false
+	TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Size = UDim2.new(0, 0, 0, 0)}):Play()
+	task.wait(0.3)
+	gui:Destroy()
+end)
+
+-- Tab Bar System
+local tabSection = create("Frame", {
+	Parent = bodyFrame,
+	Size = UDim2.new(1, -20, 0, 34),
+	Position = UDim2.new(0, 10, 0, 2),
+	BackgroundTransparency = 1
+})
+
+local tabScroll = create("ScrollingFrame", {
+	Parent = tabSection,
+	Size = UDim2.new(1, -34, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ClipsDescendants = false
+})
+
+create("UIPadding", {
+	Parent = tabScroll,
+	PaddingTop = UDim.new(0, 3),
+	PaddingBottom = UDim.new(0, 3),
+	PaddingLeft = UDim.new(0, 3),
+	PaddingRight = UDim.new(0, 3)
+})
+
+create("UIListLayout", {
+	Parent = tabScroll,
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 8),
+	SortOrder = Enum.SortOrder.LayoutOrder
+})
+
+local addTabBtn = create("TextButton", {
+	Parent = tabSection,
+	Size = UDim2.new(0, 26, 0, 26),
+	Position = UDim2.new(1, -26, 0, 3),
+	BackgroundColor3 = C_GRAY,
+	Text = "+",
+	TextColor3 = C_GREEN,
+	FontFace = FONT_BOLD,
+	TextSize = 16
+})
+addCorner(addTabBtn, 6)
+addStroke(addTabBtn, 1, C_DARK_GREEN)
+
+-- Text Container
+local editorFrame = create("Frame", {
+	Parent = bodyFrame,
+	Size = UDim2.new(1, -115, 1, -78),
+	Position = UDim2.new(0, 10, 0, 40),
+	BackgroundColor3 = C_GRAY
+})
+addCorner(editorFrame, 8)
+addStroke(editorFrame, 1, C_DARK_GREEN)
+
+local textScroll = create("ScrollingFrame", {
+	Parent = editorFrame,
+	Size = UDim2.new(1, -6, 1, -6),
+	Position = UDim2.new(0, 3, 0, 3),
+	BackgroundTransparency = 1,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = C_GREEN
+})
+
+local textBox = create("TextBox", {
+	Parent = textScroll,
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	TextColor3 = C_WHITE,
+	FontFace = FONT_BOLD,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	MultiLine = true,
+	ClearTextOnFocus = false,
+	TextWrapped = true,
+	PlaceholderText = "Paste your build code here..."
+})
+
+-- Action Buttons Column
+local sideContainer = create("Frame", {
+	Parent = bodyFrame,
+	Size = UDim2.new(0, 90, 1, -78),
+	Position = UDim2.new(1, -100, 0, 40),
+	BackgroundTransparency = 1
+})
+create("UIListLayout", {
+	Parent = sideContainer,
+	FillDirection = Enum.FillDirection.Vertical,
+	Padding = UDim.new(0, 5),
+	SortOrder = Enum.SortOrder.LayoutOrder
+})
+
+local function createActionButton(name, text, height, order)
+	local btn = create("TextButton", {
+		Parent = sideContainer,
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundColor3 = C_GRAY,
+		Text = text,
+		TextColor3 = C_GREEN,
+		FontFace = FONT_BOLD,
+		TextSize = 11,
+		TextWrapped = true,
+		LayoutOrder = order,
+		Name = name,
+		AutoButtonColor = false
+	})
+	addCorner(btn, 6)
+	local stroke = addStroke(btn, 1, C_DARK_GREEN)
+	
+	btn.MouseEnter:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = C_LIGHT_GRAY}):Play()
+		TweenService:Create(stroke, TweenInfo.new(0.2), {Color = C_GREEN}):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = C_GRAY}):Play()
+		TweenService:Create(stroke, TweenInfo.new(0.2), {Color = C_DARK_GREEN}):Play()
+	end)
+	return btn, stroke
+end
+
+local btnStart = createActionButton("Build", "START BUILD", 36, 1)
+local btnImport = createActionButton("Import", "IMPORT", 30, 2)
+local btnCopy = createActionButton("Copy", "COPY", 30, 3)
+local btnSave = createActionButton("Save", "SAVE BUILDS", 30, 4)
+local btnMode = createActionButton("SaveMode", "MODE: ALL", 24, 5)
+local btnClear = createActionButton("Clear", "CLEAR", 24, 6)
+local btnNextChunk = createActionButton("NextChunk", "NEXT CHUNK", 24, 7)
+btnNextChunk.Visible = false
+
+-- Footer Stats Bar
+local footerFrame = create("Frame", {
+	Parent = bodyFrame,
+	Size = UDim2.new(1, -20, 0, 26),
+	Position = UDim2.new(0, 10, 1, -30),
+	BackgroundTransparency = 1
+})
+
+local statDisplay = create("TextLabel", {
+	Parent = footerFrame,
+	Size = UDim2.new(0.5, 0, 1, 0),
+	BackgroundTransparency = 1,
+	TextColor3 = C_GREEN,
+	FontFace = FONT_BOLD,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	RichText = true,
+	Text = "Blocks: 0  |  Chars: 0"
+})
+
+local perfDisplay = create("TextLabel", {
+	Parent = footerFrame,
+	Size = UDim2.new(0.5, 0, 1, 0),
+	Position = UDim2.new(0.5, 0, 0, 0),
+	BackgroundTransparency = 1,
+	TextColor3 = C_GREEN,
+	FontFace = FONT_BOLD,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	RichText = true,
+	Text = "FPS: 60  |  Ping: 0ms"
+})
+
+-- Dynamic Tab System
+local tabElements = {}
+local function renderTabs()
+	for _, v in ipairs(tabElements) do v:Destroy() end
+	tabElements = {}
+	
+	for i, tab in ipairs(tabsData) do
+		local isCurrent = (i == activeTabIndex)
+		local tFrame = create("Frame", {
+			Parent = tabScroll,
+			Size = UDim2.new(0, 85, 1, -6),
+			BackgroundColor3 = isCurrent and C_BLACK or C_GRAY,
+			LayoutOrder = i
+		})
+		addCorner(tFrame, 6)
+		local stroke = addStroke(tFrame, 1, isCurrent and C_GREEN or C_DARK_GREEN)
+		
+		local tBtn = create("TextButton", {
+			Parent = tFrame,
+			Size = UDim2.new(1, -20, 1, 0),
+			BackgroundTransparency = 1,
+			Text = tab.name,
+			TextColor3 = isCurrent and C_GREEN or C_WHITE,
+			FontFace = FONT_BOLD,
+			TextSize = 11,
+			TextTruncate = Enum.TextTruncate.AtEnd
+		})
+		
+		local delBtn = create("TextButton", {
+			Parent = tFrame,
+			Size = UDim2.new(0, 16, 0, 16),
+			Position = UDim2.new(1, -18, 0.5, -8),
+			BackgroundTransparency = 1,
+			Text = "✕",
+			TextColor3 = isCurrent and C_GREEN or Color3.fromRGB(150, 150, 150),
+			FontFace = FONT_BOLD,
+			TextSize = 10
+		})
+		
+		tBtn.MouseButton1Click:Connect(function()
+			activeTabIndex = i
+			textBox.Text = tab.content
+			_G.fullBuildString = tab.content
+			renderTabs()
+		end)
+		
+		delBtn.MouseButton1Click:Connect(function()
+			if #tabsData <= 1 then
+				tabsData[1] = {name = "Build 1", content = ""}
+				activeTabIndex = 1
+			else
+				table.remove(tabsData, i)
+				if activeTabIndex >= i then
+					activeTabIndex = math.max(1, activeTabIndex - 1)
+				end
+			end
+			textBox.Text = tabsData[activeTabIndex].content
+			_G.fullBuildString = tabsData[activeTabIndex].content
+			saveData()
+			renderTabs()
+		end)
+		
+		table.insert(tabElements, tFrame)
+	end
+	tabScroll.CanvasSize = UDim2.new(0, #tabsData * 93 + 6, 0, 0)
+end
+
+addTabBtn.MouseButton1Click:Connect(function()
+	table.insert(tabsData, {name = "Build " .. (#tabsData + 1), content = ""})
+	activeTabIndex = #tabsData
+	textBox.Text = ""
+	_G.fullBuildString = ""
+	saveData()
+	renderTabs()
+end)
+
+textBox:GetPropertyChangedSignal("Text"):Connect(function()
+	tabsData[activeTabIndex].content = textBox.Text
+	_G.fullBuildString = textBox.Text
+	saveData()
+	
+	-- Auto-Resize Editor Canvas
+	local params = Instance.new("GetTextBoundsParams")
+	params.Text = textBox.Text == "" and "A" or textBox.Text
+	params.Font = FONT_BOLD
+	params.Size = 12
+	params.Width = textScroll.AbsoluteSize.X > 0 and textScroll.AbsoluteSize.X or 300
+	
+	local success, result = pcall(function() return TextService:GetTextBoundsAsync(params) end)
+	if success then
+		textScroll.CanvasSize = UDim2.new(0, 0, 0, math.max(result.Y + 15, editorFrame.AbsoluteSize.Y - 10))
+		textBox.Size = UDim2.new(1, 0, 0, math.max(result.Y + 15, editorFrame.AbsoluteSize.Y - 10))
+	end
+	
+	-- Update Stats
+	local text = textBox.Text
+	local blockCount = 0
+	for _ in text:gmatch("|[^|]+|") do blockCount = blockCount + 1 end
+	statDisplay.Text = "Blocks: " .. blockCount .. "  |  Chars: " .. #text
+end)
+
+textBox.Text = tabsData[activeTabIndex].content or ""
+renderTabs()
+
+-- Optimization Flag: Reuse Dimensions & Placement Template across differing colors
+_G.reuseDimensionsIgnoreColor = true
+
+-- Logic: Building, Visualizing & Serialization
+local isBuilding = false
+local visualsShowing = false
+local visualFolder = nil
+local centerPart = nil
+local handles = nil
+local originalCenterPos = Vector3.new()
+
+local SymbolToMaterial = {
+	["!"] = Enum.Material.SmoothPlastic, ["@"] = Enum.Material.Plastic, ["#"] = Enum.Material.CeramicTiles,
+	["$"] = Enum.Material.Brick, ["%"] = Enum.Material.WoodPlanks, ["^"] = Enum.Material.Ice,
+	["&"] = Enum.Material.Grass, ["*"] = Enum.Material.Sand, ["("] = Enum.Material.Snow,
+	[")"] = Enum.Material.Glass, ["-"] = Enum.Material.Wood, ["_"] = Enum.Material.Slate,
+	["="] = Enum.Material.Pebble, ["+"] = Enum.Material.Marble, ["["] = Enum.Material.Granite,
+	["]"] = Enum.Material.DiamondPlate, ["{"] = Enum.Material.Metal, ["}"] = Enum.Material.Asphalt,
+	["~"] = Enum.Material.Concrete, ["`"] = Enum.Material.Pavement, ["?"] = Enum.Material.Neon
+}
+local MaterialSymbols = {}
+for k, v in pairs(SymbolToMaterial) do MaterialSymbols[v] = k end
+
+local FaceSymbols = {
+	[Enum.NormalId.Left] = "L", [Enum.NormalId.Right] = "R", [Enum.NormalId.Top] = "T",
+	[Enum.NormalId.Bottom] = "Bo", [Enum.NormalId.Front] = "F", [Enum.NormalId.Back] = "Ba"
+}
+
+local function hexToColor(hex)
+	local r = tonumber(hex:sub(1, 2), 16) or 255
+	local g = tonumber(hex:sub(3, 4), 16) or 255
+	local b = tonumber(hex:sub(5, 6), 16) or 255
+	return Color3.fromRGB(r, g, b)
+end
+
+local function parseBlocks(buildStr)
+	local blocks = {}
+	for blockData in buildStr:gmatch("|([^|]+)") do
+		local colorHex = blockData:sub(1, 6)
+		local materialSymbol = blockData:sub(7, 7)
+		local rest = blockData:sub(8)
+		local canCollide = true
+		if rest:sub(1, 1) == "^" then
+			canCollide = false
+			rest = rest:sub(2)
+		end
+		local sizeData, posData = rest:match("([^%.]+)%.(.+)")
+		if sizeData and posData then
+			local sX, sY, sZ = sizeData:match("([%d%.]+),([%d%.]+),([%d%.]+)")
+			local pX, pY, pZ = posData:match("([%-?%d%.]+),([%-?%d%.]+),([%-?%d%.]+)")
+			if sX and pX then
+				table.insert(blocks, {
+					size = Vector3.new(tonumber(sX), tonumber(sY), tonumber(sZ)),
+					centerPos = Vector3.new(tonumber(pX), tonumber(pY), tonumber(pZ)),
+					color = hexToColor(colorHex),
+					material = SymbolToMaterial[materialSymbol] or Enum.Material.SmoothPlastic,
+					canCollide = canCollide
+				})
+			end
+		end
+	end
+	return blocks
+end
+
+local function cleanupVisuals()
+	if visualFolder then visualFolder:Destroy() visualFolder = nil end
+	if handles then handles:Destroy() handles = nil end
+	centerPart = nil
+	visualsShowing = false
+	_G.visualsEnabled = false
+	_G.buildOffset = Vector3.new(0, 0, 0)
+	btnImport.Text = "IMPORT"
+end
+
+btnImport.MouseButton1Click:Connect(function()
+	if _G.autobuildRunning then return end
+	if _G.forceImportReset then
+		visualsShowing = false
+		_G.forceImportReset = false
+	end
+	
+	local buildString = _G.fullBuildString or textBox.Text
+	if buildString == "" then return end
+	if visualsShowing then
+		cleanupVisuals()
+		return
+	end
+	
+	local blocks = parseBlocks(buildString)
+	if #blocks == 0 then return end
+	
+	cleanupVisuals()
+	
+	visualFolder = create("Folder", {Name = "BuildVisuals", Parent = workspace})
+	
+	local totalPos = Vector3.new(0, 0, 0)
+	for _, blockData in ipairs(blocks) do
+		totalPos = totalPos + blockData.centerPos
+	end
+	originalCenterPos = totalPos / #blocks
+	
+	centerPart = create("Part", {
+		Name = "CenterHandle",
+		Size = Vector3.new(2, 2, 2),
+		Position = originalCenterPos,
+		Anchored = true,
+		CanCollide = false,
+		Transparency = 1,
+		Parent = visualFolder
+	})
+	
+	for i, blockData in ipairs(blocks) do
+		create("Part", {
+			Name = "Visual_" .. i,
+			Size = blockData.size,
+			CFrame = CFrame.new(blockData.centerPos),
+			Anchored = true,
+			CanCollide = false,
+			Material = blockData.material,
+			Color = blockData.color,
+			Transparency = 0.45,
+			Parent = visualFolder
+		})
+	end
+	
+	handles = create("Handles", {
+		Parent = CoreGui,
+		Style = Enum.HandlesStyle.Movement,
+		Adornee = centerPart
+	})
+	
+	local isDragging = false
+	local startPositions = {}
+	
+	handles.MouseButton1Down:Connect(function()
+		isDragging = true
+		workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+		startPositions = {}
+		for _, child in pairs(visualFolder:GetChildren()) do
+			if child:IsA("BasePart") then
+				startPositions[child] = child.Position
+			end
+		end
+	end)
+	
+	handles.MouseDrag:Connect(function(face, distance)
+		if not isDragging then return end
+		local direction = Vector3.FromNormalId(face)
+		local snappedDistance = math.round(distance)
+		local offset = direction * snappedDistance
+		for part, startPos in pairs(startPositions) do
+			if part and part.Parent then
+				part.Position = startPos + offset
+			end
+		end
+		_G.buildOffset = centerPart.Position - originalCenterPos
+	end)
+	
+	handles.MouseButton1Up:Connect(function()
+		isDragging = false
+		workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+		startPositions = {}
+	end)
+	
+	visualsShowing = true
+	_G.visualsEnabled = true
+	_G.buildOffset = Vector3.new(0, 0, 0)
+	btnImport.Text = "REMOVE"
+end)
+
+btnStart.MouseButton1Click:Connect(function()
+	if not isBuilding then
+		if not _G.visualsEnabled then return end
+		local buildString = _G.fullBuildString or textBox.Text
+		if buildString == "" then return end
+
+		isBuilding = true
+		_G.autobuildRunning = true
+		btnStart.Text = "STOP BUILD"
+		btnStart.TextColor3 = C_RED
+
+		cleanupVisuals()
+
+		_G.buildString = buildString
+		_G.matchAdjacentDimensionsOnly = true
+
+		task.spawn(function()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/agarvsocooolsmith/Scripts/refs/heads/main/AUTOBUILDSOURCE.lua"))()
+			isBuilding = false
+			_G.autobuildRunning = false
+			btnStart.Text = "START BUILD"
+			btnStart.TextColor3 = C_GREEN
+		end)
+	else
+		_G.stopautobuild = true
+		isBuilding = false
+		_G.autobuildRunning = false
+		btnStart.Text = "START BUILD"
+		btnStart.TextColor3 = C_GREEN
+	end
+end)
+
+btnCopy.MouseButton1Click:Connect(function()
+	setclipboard(_G.fullBuildString or textBox.Text)
+	btnCopy.Text = "COPIED!"
+	task.wait(1)
+	btnCopy.Text = "COPY"
+end)
+
+btnClear.MouseButton1Click:Connect(function()
+	textBox.Text = ""
+	_G.fullBuildString = nil
+	_G.buildChunks = nil
+	_G.totalChunks = nil
+	_G.currentChunk = nil
+	btnNextChunk.Visible = false
+end)
+
+local saveModeAll = true
+btnMode.MouseButton1Click:Connect(function()
+	saveModeAll = not saveModeAll
+	btnMode.Text = saveModeAll and "MODE: ALL" or "MODE: YOU"
+end)
+
+btnSave.MouseButton1Click:Connect(function()
+	local bricksFolder = workspace:FindFirstChild("Bricks")
+	if not bricksFolder then return end
+
+	local buildString = ""
+	local descendants = saveModeAll and bricksFolder:GetDescendants() or (bricksFolder:FindFirstChild(LocalPlayer.Name) and bricksFolder[LocalPlayer.Name]:GetDescendants() or {})
+
+	for _, descendant in pairs(descendants) do
+		if descendant:IsA("BasePart") and descendant.Name == "Brick" then
+			if not descendant.Anchored then continue end
+			local size = descendant.Size
+			if size.X % 1 ~= 0 or size.Y % 1 ~= 0 or size.Z % 1 ~= 0 then continue end
+			
+			local materialSymbol = MaterialSymbols[descendant.Material] or "!"
+			local colorHex = string.format("%02X%02X%02X", math.floor(descendant.Color.R * 255), math.floor(descendant.Color.G * 255), math.floor(descendant.Color.B * 255))
+			local cf = descendant.CFrame
+			local canCollideMarker = descendant.CanCollide and "" or "^"
+			
+			local sprays = {}
+			for _, child in pairs(descendant:GetChildren()) do
+				if child.Name == "Spray" and child:FindFirstChild("Label") and FaceSymbols[child.Face] then
+					local lbl = child.Label
+					local cHex = string.format("%02X%02X%02X", math.floor(lbl.TextColor3.R * 255), math.floor(lbl.TextColor3.G * 255), math.floor(lbl.TextColor3.B * 255))
+					table.insert(sprays, string.format('%s"%s""%s"', FaceSymbols[child.Face], lbl.Text or "", cHex))
+				end
+			end
+			local sprayString = #sprays > 0 and "." .. table.concat(sprays, "..") or ""
+			buildString = buildString .. string.format("|%s%s%s%.0f,%.0f,%.0f.%.1f,%.1f,%.1f%s.|", colorHex, materialSymbol, canCollideMarker, size.X, size.Y, size.Z, cf.X, cf.Y, cf.Z, sprayString)
+		end
+	end
+
+	if buildString == "" then return end
+	_G.fullBuildString = buildString
+
+	if #buildString <= 190000 then
+		textBox.Text = buildString
+		setclipboard(buildString)
+		btnNextChunk.Visible = false
+	else
+		local chunks = {}
+		for i = 1, #buildString, 190000 do
+			table.insert(chunks, buildString:sub(i, i + 190000 - 1))
+		end
+		_G.buildChunks = chunks
+		_G.totalChunks = #chunks
+		_G.currentChunk = 1
+
+		setclipboard(chunks[1])
+		textBox.Text = "[Build split into " .. #chunks .. " chunks. Chunk 1 copied to clipboard. Click NEXT CHUNK]"
+		btnNextChunk.Visible = true
+	end
+end)
+
+btnNextChunk.MouseButton1Click:Connect(function()
+	if not _G.buildChunks or not _G.currentChunk then return end
+	_G.currentChunk = math.min(_G.currentChunk + 1, _G.totalChunks)
+	setclipboard(_G.buildChunks[_G.currentChunk])
+	textBox.Text = "[Chunk " .. _G.currentChunk .. "/" .. _G.totalChunks .. " copied to clipboard!]"
+	if _G.currentChunk == _G.totalChunks then
+		btnNextChunk.Visible = false
+	end
+end)
+
+-- Performance Tracker Loop
+local lastTime = tick()
+RunService.RenderStepped:Connect(function()
+	local now = tick()
+	local fps = math.round(1 / (now - lastTime))
+	lastTime = now
+	local ping = math.round(LocalPlayer:GetNetworkPing() * 1000)
+	perfDisplay.Text = string.format("FPS: %d  |  Ping: %dms", fps, ping)
+end)
